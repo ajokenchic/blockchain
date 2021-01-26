@@ -1,9 +1,13 @@
 const sha256=require('sha256');
+const currentNodeUrl=process.argv[3];
+const{v1:uuid}=require('uuid');
 function Blockchain(){
     this.chain=[];//채굴한 블록을 저장하는 배열
     this.newTransactions=[];//블록에 저장되지 않은 모든 트랜젝션을 저장하는 배열.
     //GENESIS블록을 만들기 위해 임의의 값으로 생성.
-    this.createNewBlock(100,'0','0')
+    this.createNewBlock(100,'0','0');
+    this.currentNodeUrl=currentNodeUrl;
+    this.networkNodes=[];
 }
 
 Blockchain.prototype.createNewBlock=function(nonce,prevBlockHash,hash){
@@ -29,9 +33,15 @@ Blockchain.prototype.createNewTransaction=function(amount,sender,recipient){
         amount:amount,
         sender:sender,
         recipient:recipient,
+        transactionId:uuid().split('-').join('')
     };
-    this.newTransactions.push(newTransaction);
-    return this.getLastBlock()['index'+1];
+    // this.newTransactions.push(newTransaction);
+    // return this.getLastBlock()['index'+1];
+    return newTransaction;
+}
+Blockchain.prototype.addTransactionTonewTransactions=function(transactionObj){
+    this.newTransactions.push(transactionObj);
+    return this.getLastBlock()['index']+1;
 }
 Blockchain.prototype.hashBlock=function(prevBlockHash,curBlockData,nonce){
     const dataString=prevBlockHash
