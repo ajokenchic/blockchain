@@ -11,6 +11,7 @@ const bitcoin=new Blockchain();
 const app=new express();
 const bodyparser=require('body-parser');
 const requestPromise = require('request-promise');
+const { request } = require('express');
 //const { urlencoded } = require('body-parser');
 app.use(bodyparser.json());
 app.use(bodyparser.urlencoded({extended:false}));
@@ -24,7 +25,34 @@ app.get('/transaction',function(req,res){
 app.get('/blockchain',function(req,res){
     res.send(bitcoin);
 });//전체 블록체인을 가져와서 그 안의 데이터를 조회
-
+app.get('/block/:blockHash',function(req,res){
+    const blockHash=req.params.blockHash;
+    const correctBlock=bitcoin.getBlock(blockHash);
+    res.json({
+        block:correctBlock
+    });
+});
+app.get('/transaction/:transactionId',function(req,res){
+    const transactionId=req.params.transactionId;
+    const transactionData=bitcoin.getTransaction(transactionId);
+    res.json({
+        transaction:transactionData.transaction,
+        block:transactionData.block
+    });
+});
+app.get('/address/:address',function(req,res){
+   const address=req.params.address;
+   const addressData=bitcoin.getAddressData(address);
+   res.json({
+       addressData:addressData
+   })
+})
+app.get('/block-explore',function(req,res){
+    res.sendFile('./index.html',{root:__dirname});
+});
+app.post('/blockchain',function(req,res){
+    res.send(bitcoin);
+});//전체 블록체인을 가져와서 그 안의 데이터를 조회
 app.post('/transaction',function(req,res){
     // const blockIndex=bitcoin.createNewTransaction(
     //     req.body.amount,
@@ -48,12 +76,66 @@ app.post('/mine',function(req,res){
     const nonce=bitcoin.proofOfWork(preBlockHash,curBlockData);
     const blockHash=bitcoin.hashBlock(preBlockHash,curBlockData,nonce);
     const newBlock=bitcoin.createNewBlock(nonce,preBlockHash,blockHash);
-    //새로운 블록을 다른 노드들에게 통지.
-    res.json({note:"New block mined successfully",block:newBlock});
-    //새로운 블록을 채굴한 것에 대한 보상 처리
-    //2018년 기준 보상은 12.5BTC,sender가 "00"이면 보상의 의미.
-    bitcoin.createNewTransaction(12.5,"0000",nodeAddress);
+    const requestPromise=[];
+    bitcoin.networkNodes.forEach(networkNodeUrl=>{
+        const requestOptions={
+            uri:networkNodeUrl+'/receive-new-block',
+            method:'POST',
+            body:{newBlock:newBlock},
+            json:true
+        }
+        requestPromise.push(reqp(requestOptions));
+    });
+    Promise.all(requestPromise)
+    .then(data=>{
+        const requestOptions={
+            uri:bitcoin.currentNodeUrl+'/transaction/broadcast',
+            method:'POST',
+            body:{
+                amount:12.5,
+                sender:'00',
+                recipient:nodeAddress
+            },
+            json:true
+        };
+        return reqp(requestOptions);
+    })
+    .then(data=>{
+        res.json({
+            note:'New block mined & broadcast successfully',
+            block:newBlock
+        });
+    });
+
+    // //새로운 블록을 다른 노드들에게 통지.
+    // res.json({note:"New block mined successfully",block:newBlock});
+    // //새로운 블록을 채굴한 것에 대한 보상 처리
+    // //2018년 기준 보상은 12.5BTC,sender가 "00"이면 보상의 의미.
+    // bitcoin.createNewTransaction(12.5,"0000",nodeAddress);
 });//새로운 블록 채굴.
+app.post('/receive-new-block',function(req,res){
+    const newBlock=req.body.newBlock;
+    const lastBlock=bitcoin.getLastBlock();
+    const correctHash=lastBlock.hash===newBlock.prevBlockHash;
+    const correctIndex=lastBlock['index']+1===newBlock['index'];
+
+    if(correctHash&&correctIndex){
+        bitcoin.chain.push(newBlock);
+        bitcoin.newTransactions=[];
+        res.json({
+            note:'New block received and accepted.',
+            newBlock:newBlock
+        });
+    }
+    else{
+        res.json({
+            note:'New block rejected.',
+            newBlock:newBlock
+        });
+    }
+});
+
+
 
 app.post(`/register-and-broadcast-node`,function(req,res){
     const newNodeUrl=req.body.newNodeUrl;//등록 요청 URL
@@ -127,7 +209,47 @@ app.post('/transaction/broadcast',function(req,res){
         res.json({note:'Transaction created and broadcast successfully.'})
     });
 });
+app.get('/consensus',function(req,res){
+    const requestPromise=[];
+    bitcoin.networkNodes.forEach(networkNodeUrl=>{
+        const requestOptions={
+            uri:networkNodeUrl+'/blockchain',
+            method:'GET',
+            json:true
+        };
+        requestPromise.push(reqp(requestOptions));
+    });
+    Promise.all(requestPromise)
+    .then(blockchains=>{
+        const currentChainLength=bitcoin.chain.length;
+        let maxChainLength=currentChainLength;
+        let newLongestChain=null;
+        let newTransactions=null;
 
+        blockchains.forEach(blockchain=>{
+            if(blockchain.chain.length>maxChainLength){
+                maxChainLength=blockchain.chain.length;
+                newLongestChain=blockchain.chain;
+                newTransactions=blockchain.newTransactions;
+            };
+        })
+        if (!newLongestChain ||
+			(newLongestChain && !bitcoin.chainIsValid(newLongestChain))) {
+			res.json({
+				note: 'Current chain has not been replaced.',
+				chain: bitcoin.chain
+			});
+		}
+		else {
+			bitcoin.chain = newLongestChain;
+			bitcoin.newTransactions = newTransactions;
+			res.json({
+				note: 'This chain has been replaced.',
+				chain: bitcoin.chain
+			});
+		}
+    })
+})
 
 app.listen(port,function(){
     console.log(`listening on port ${port}...`)
