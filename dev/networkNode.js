@@ -224,15 +224,21 @@ app.get('/consensus',function(req,res){
         const currentChainLength=bitcoin.chain.length;
         let maxChainLength=currentChainLength;
         let newLongestChain=null;
-        let newTransactions=null;
+        let newTransactions=bitcoin.newTransactions;
 
         blockchains.forEach(blockchain=>{
             if(blockchain.chain.length>maxChainLength){
                 maxChainLength=blockchain.chain.length;
                 newLongestChain=blockchain.chain;
                 newTransactions=blockchain.newTransactions;
-            };
-        })
+            }
+            else if(blockchain.chain.length==maxChainLength){  
+                if(blockchain.newTransactions.length>newTransactions.length){
+                    newLongestChain=blockchain.chain;
+                    newTransactions=blockchain.newTransactions;
+                }
+            }
+        });
         if (!newLongestChain ||
 			(newLongestChain && !bitcoin.chainIsValid(newLongestChain))) {
 			res.json({
